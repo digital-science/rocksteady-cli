@@ -1,0 +1,199 @@
+#!/bin/bash
+set -eo pipefail
+
+usage()
+{
+  echo
+  echo "Build and deploy a Docker image, push it to ECR, and notify RockSteady that"
+  echo "it is available for deployment."
+  echo
+  echo "Usage:"
+  echo "  rocksteady build – Build and tag a docker image from the current folder"
+  echo "  rocksteady notify ROCKSTEADY_URL – Notify RockSteady about a new build"
+  echo
+  echo "Requirements:"
+  echo "  aws CLI application installed and working"
+  echo "  curl"
+  echo
+  echo "Configuration:"
+  echo "  Use environment variables to supply configuration. We check multiple"
+  echo "  environment variables in order for each configuration option to allow us to"
+  echo "  support multiple deployment environments."
+  echo
+  echo "  \$ROCKSTEADY_PROJECT, \$CIRCLE_PROJECT_REPONAME"
+  echo "    Specify the name of the project on RockSteady"
+  echo
+  echo "  \$ECR_REPO, \$ROCKSTEADY_PROJECT, \$CIRCLE_PROJECT_REPONAME"
+  echo "    Specify the name of the ECR repository to use"
+  echo
+  echo "  \$ECR_BASE"
+  echo "    Specify the base URL for the ECR repository"
+  echo
+  echo "  \$ECR_AWS_ACCESS_KEY_ID, \$AWS_ACCESS_KEY_ID"
+  echo "    Specify the AWS access key ID to be used to accessing ECR"
+  echo
+  echo "  \$ECR_AWS_SECRET_ACCESS_KEY, \$AWS_SECRET_ACCESS_KEY"
+  echo "    Specify the AWS secret access key to be used to accessing ECR"
+  echo
+  echo "  \$ECR_AWS_REGION"
+  echo "    Specify the AWS region for use when logging into AWS ECR"
+  echo
+  echo "  \$CIRCLE_BUILD_NUM"
+  echo "    Specify the build number for use in tagging"
+  echo
+  echo "  \$CIRCLE_BRANCH"
+  echo "    Specify the branch for use in tagging"
+  echo
+  echo "  \$CIRCLE_SHA1"
+  echo "    Specify the commit SHA for use in tagging"
+  echo
+  echo "Exit codes:"
+  echo "  0 - Success"
+  echo "  1 - General failure"
+  echo "  2 – Missing configuration variable"
+  echo "  3 – Missing some dependencies"
+}
+
+get_shared_env() {
+  name="${ROCKSTEADY_PROJECT:-$CIRCLE_PROJECT_REPONAME}"
+  if [ -z "$name" ]
+  then
+    echo "Error: You must provide the RockSteady project name this build through the ROCKSTEADY_PROJECT or CIRCLE_PROJECT_REPONAME environment variables"
+    usage
+    exit 2
+  fi
+
+  build_num=$CIRCLE_BUILD_NUM
+  if [ -z "$build_num" ]
+  then
+    echo "Error: You must provide the build number of this build through the CIRCLE_BUILD_NUM environment variable"
+    usage
+    exit 2
+  fi
+
+  branch=$CIRCLE_BRANCH
+  if [ -z "$branch" ]
+  then
+    echo "Error: You must provide the git branch of this build through the CIRCLE_BRANCH environment variable"
+    usage
+    exit 2
+  fi
+}
+
+get_build_env() {
+  get_shared_env
+
+  if ! aws ecr --version 2>&1 > /dev/null
+  then
+    echo "You must have the AWS command line interface installed"
+    exit 3
+  fi
+
+  ecr_repo="${ECR_REPO:-${ROCKSTEADY_PROJECT:-$CIRCLE_PROJECT_REPONAME}}"
+  if [ -z "$ecr_repo" ]
+  then
+    echo "Error: You must provide the ECR repository name of this build through the ECR_REPO, ROCKSTEADY_PROJECT or CIRCLE_PROJECT_REPONAME environment variables"
+    usage
+    exit 2
+  fi
+
+  ecr_base=$ECR_BASE
+  if [ -z "$ecr_base" ]
+  then
+    echo "Error: You must provide the base URI of the ECR repository through the ECR_BASE environment variable"
+    usage
+    exit 2
+  fi
+
+  aws_access_key_id="${ECR_AWS_ACCESS_KEY_ID:-$AWS_ACCESS_KEY_ID}"
+  if [ -z "$aws_access_key_id" ]
+  then
+    echo "Error: You must provide the AWS access key ID to use through the ECR_AWS_ACCESS_KEY_ID or AWS_ACCESS_KEY_ID environment variables"
+    usage
+    exit 2
+  fi
+
+  aws_secret_access_key="${ECR_AWS_SECRET_ACCESS_KEY:-$AWS_SECRET_ACCESS_KEY}"
+  if [ -z "$aws_secret_access_key" ]
+  then
+    echo "Error: You must provide the AWS secret access key to use through the ECR_AWS_SECRET_ACCESS_KEY or AWS_SECRET_ACCESS_KEY environment variables"
+    usage
+    exit 2
+  fi
+
+  aws_region="${ECR_AWS_REGION}"
+  if [ -z "$aws_region" ]
+  then
+    echo "Error: You must provide the AWS region to use through the ECR_AWS_REGION environment variable"
+    usage
+    exit 2
+  fi
+
+  sha1=$CIRCLE_SHA1
+  if [ -z "$sha1" ]
+  then
+    echo "Error: You must provide the git commit SHA of this build through the CIRCLE_SHA1 environment variable"
+    usage
+    exit 2
+  fi
+
+  tags=("$ecr_base/$name:build-$build_num" "$ecr_base/$name:$branch-$build_num" "$ecr_base/$name:$branch-latest" "$ecr_base/$name:$sha1")
+  if [ "$branch" = "master" ]; then
+    tags+=("$ecr_base/$name:latest")
+  fi
+}
+
+get_deploy_env() {
+  get_shared_env
+
+  if ! curl --version 2>&1 > /dev/null
+  then
+    echo "You must have curl installed"
+    exit 3
+  fi
+
+  server_cmd=$1
+  echo $1
+  rocksteady_server="${server_cmd:-$ROCKSTEADY_SERVER}"
+  if [ -z "$rocksteady_server" ]
+  then
+    echo "Error: You must provide URL for the RockSteady server to deploy to through the command line or the ROCKSTEADY_SERVER environment variable"
+    usage
+    exit 2
+  fi
+}
+
+sub_build() {
+  get_build_env
+
+  `AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr get-login --no-include-email --region $aws_region`
+
+  docker build `printf " -t %s" "${tags[@]}"` .
+  for tag in "${tags[@]}"
+  do
+    docker push $tag
+  done
+}
+
+sub_deploy() {
+  get_deploy_env $1
+
+  curl -d '{"outcome":"success","lifecycle":"finished","build_num":'"$build_num"',"branch":"'"$branch"'"}' -H 'Content-Type: application/json' $rocksteady_server/webhook/$name
+}
+
+subcommand=$1
+case $subcommand in
+    "" | "-h" | "--help" | "help")
+      usage
+      exit 0
+      ;;
+  *)
+    shift
+    sub_${subcommand} $@
+    if [ $? = 127 ]; then
+        echo "Error: '$subcommand' is not a known subcommand." >&2
+        echo "       Run '$0 --help' for a list of known subcommands." >&2
+        exit 1
+    fi
+    ;;
+esac
