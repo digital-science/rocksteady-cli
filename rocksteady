@@ -9,7 +9,7 @@ usage()
   echo
   echo "Usage:"
   echo "  rocksteady build – Build and tag a docker image from the current folder"
-  echo "  rocksteady notify ROCKSTEADY_URL – Notify RockSteady about a new build"
+  echo "  rocksteady deploy ROCKSTEADY_URL – Notify RockSteady about a new build"
   echo
   echo "Requirements:"
   echo "  aws CLI application installed and working"
@@ -178,7 +178,7 @@ sub_build() {
 sub_deploy() {
   get_deploy_env $1
 
-  curl -d '{"outcome":"success","lifecycle":"finished","build_num":'"$build_num"',"branch":"'"$branch"'"}' -H 'Content-Type: application/json' $rocksteady_server/webhook/$name
+  curl -fd '{"payload":{"outcome":"success","lifecycle":"finished","build_num":'"$build_num"',"branch":"'"$branch"'","repository_name":"'"$name"'"}}' -H 'Content-Type: application/json' $rocksteady_server/webhook
 }
 
 subcommand=$1
