@@ -137,7 +137,8 @@ get_build_env() {
     exit 2
   fi
 
-  tags=("$ecr_base/$name:build-$build_num" "$ecr_base/$name:$branch-$build_num" "$ecr_base/$name:$branch-latest" "$ecr_base/$name:$sha1")
+  unslashedbranch=${branch//\//-}
+  tags=("$ecr_base/$name:build-$build_num" "$ecr_base/$name:$unslashedbranch-$build_num" "$ecr_base/$name:$unslashedbranch-latest" "$ecr_base/$name:$sha1")
   if [ "$branch" = "master" ]; then
     tags+=("$ecr_base/$name:latest")
   fi
