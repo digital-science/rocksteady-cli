@@ -162,6 +162,9 @@ get_deploy_env() {
     usage
     exit 2
   fi
+
+  cf_accessc_id=$CF_ACCESSC_ID
+  cf_access_secret=$CF_ACCESS_SECRET 
 }
 
 sub_build() {
@@ -179,7 +182,7 @@ sub_build() {
 sub_deploy() {
   get_deploy_env $1
 
-  curl -fd '{"payload":{"outcome":"success","lifecycle":"finished","build_num":'"$build_num"',"branch":"'"$branch"'","repository_name":"'"$name"'"}}' -H 'Content-Type: application/json' $rocksteady_server/webhook
+  curl -fd '{"payload":{"outcome":"success","lifecycle":"finished","build_num":'"$build_num"',"branch":"'"$branch"'","repository_name":"'"$name"'"}}' -H 'Content-Type: application/json' -H "CF-Access-Client-Id: $cf_accessc_id" -H "CF-Access-Client-Secret: $cf_access_secret" $rocksteady_server/webhook
 }
 
 subcommand=$1
