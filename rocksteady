@@ -172,7 +172,7 @@ sub_build() {
 
   `AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr get-login --no-include-email --region $aws_region`
 
-  docker build `printf " -t %s" "${tags[@]}"` --build-arg BUNDLE_GEMS__CONTRIBSYS__COM="${SIDEKIQ_PRO_TOKEN}" .
+  docker build `printf " -t %s" "${tags[@]}"` --build-arg SIDEKIQ_PRO_TOKEN=$SIDEKIQ_PRO_TOKEN .
   for tag in "${tags[@]}"
   do
     docker push $tag
