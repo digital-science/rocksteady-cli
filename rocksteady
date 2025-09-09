@@ -172,7 +172,10 @@ sub_build() {
 
   `AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr get-login --no-include-email --region $aws_region`
 
-  docker build `printf " -t %s" "${tags[@]}"` --build-arg SIDEKIQ_PRO_TOKEN=$SIDEKIQ_PRO_TOKEN --build-arg DSUI_GITHUB_TOKEN=$DSUI_GITHUB_TOKEN .
+  cache_from_tag="$ecr_base/$name:$unslashedbranch-latest"
+  docker pull "$cache_from_tag" || true
+
+  docker build --cache-from "$cache_from_tag" `printf " -t %s" "${tags[@]}"` --build-arg SIDEKIQ_PRO_TOKEN=$SIDEKIQ_PRO_TOKEN --build-arg DSUI_GITHUB_TOKEN=$DSUI_GITHUB_TOKEN .
   for tag in "${tags[@]}"
   do
     docker push $tag
