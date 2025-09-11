@@ -205,6 +205,30 @@ sub_build() {
   buildx_cmd+=( --push --progress=plain )
 
   "${buildx_cmd[@]}"
+  prune_stale_cache_artifacts
+}
+
+prune_stale_cache_artifacts() {
+  # Stale cache artifacts become untagged images in the ECR repository when new ones are pushed.
+  echo "Pruning untagged ECR cache artifacts for repository $name"
+
+  local digests
+  digests=$(AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr list-images --repository-name "$name" --region="$aws_region" --filter tagStatus=UNTAGGED --query 'imageIds[].imageDigest' --output text)
+
+  if [ -z "$digests" ]; then
+    echo "No untagged cache artifacts to prune"
+    return 0
+  fi
+
+  local args=()
+  for digest in $digests; do
+    args+=( imageDigest=$digest )
+  done
+
+  local count=$(echo $digests | wc -w | tr -d ' ')
+
+  echo "Deleting $count untagged cache artifacts"
+  AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr batch-delete-image --repository-name "$name" --region="$aws_region" --image-ids "${args[@]}"
 }
 
 sub_deploy() {
