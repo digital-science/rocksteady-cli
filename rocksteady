@@ -190,11 +190,14 @@ sub_build() {
 
   # Caching strategy:
   # main/master: import main cache only; export main cache only
+  # dependabot branches: import main cache only; skip export to avoid cache pollution
   # other branches: import main (if exists) + branch cache; export branch cache only
   if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
     buildx_cmd+=( \
       --cache-from type=registry,ref="$cache_ref_main" \
       --cache-to type=registry,ref="$cache_ref_main",mode=max )
+  elif [[ "$branch" =~ ^dependabot/ ]]; then
+    buildx_cmd+=( --cache-from type=registry,ref="$cache_ref_main" )
   else
     buildx_cmd+=( \
       --cache-from type=registry,ref="$cache_ref_main" \
