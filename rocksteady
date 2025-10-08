@@ -195,14 +195,18 @@ sub_build() {
   if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
     buildx_cmd+=( \
       --cache-from type=registry,ref="$cache_ref_main" \
-      --cache-to type=registry,ref="$cache_ref_main",mode=max )
+      --cache-to type=registry,ref="$cache_ref_main",mode=max \
+      --no-cache-filter system-build
+      --no-cache-filter system-final )
   elif [[ "$branch" =~ ^dependabot/ ]]; then
     buildx_cmd+=( --cache-from type=registry,ref="$cache_ref_main" )
   else
     buildx_cmd+=( \
       --cache-from type=registry,ref="$cache_ref_main" \
       --cache-from type=registry,ref="$cache_ref_branch" \
-      --cache-to type=registry,ref="$cache_ref_branch",mode=max )
+      --cache-to type=registry,ref="$cache_ref_branch",mode=max \
+      --no-cache-filter system-build
+      --no-cache-filter system-final )
   fi
 
   buildx_cmd+=( --push --progress=plain )
