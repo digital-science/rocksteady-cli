@@ -139,7 +139,8 @@ get_build_env() {
 
   unslashedbranch=${branch//\//-}
   tags=("$ecr_base/$name:build-$build_num" "$ecr_base/$name:$unslashedbranch-$build_num" "$ecr_base/$name:$unslashedbranch-latest" "$ecr_base/$name:$sha1")
-  if [ "$branch" = "master" ]; then
+
+  if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
     tags+=("$ecr_base/$name:latest")
   fi
 }
@@ -172,11 +173,69 @@ sub_build() {
 
   `AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr get-login --no-include-email --region $aws_region`
 
-  docker build `printf " -t %s" "${tags[@]}"` --build-arg SIDEKIQ_PRO_TOKEN=$SIDEKIQ_PRO_TOKEN --build-arg DSUI_GITHUB_TOKEN=$DSUI_GITHUB_TOKEN .
-  for tag in "${tags[@]}"
-  do
-    docker push $tag
+  # Define cache references
+  cache_ref_main="$ecr_base/$name:main-cache"
+  cache_ref_branch="$ecr_base/$name:$unslashedbranch-branch-cache"
+
+  docker buildx create --name rocksteady-builder --use
+  buildx_cmd=(docker buildx build .)
+
+  for tag in "${tags[@]}"; do
+    buildx_cmd+=( -t "$tag" )
   done
+
+  buildx_cmd+=( \
+    --build-arg SIDEKIQ_PRO_TOKEN="$SIDEKIQ_PRO_TOKEN" \
+    --build-arg DSUI_GITHUB_TOKEN="$DSUI_GITHUB_TOKEN" )
+
+  # Caching strategy:
+  # main/master: import main cache only; export main cache only
+  # dependabot branches: import main cache only; skip export to avoid cache pollution
+  # other branches: import main (if exists) + branch cache; export branch cache only
+  if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+    buildx_cmd+=( \
+      --cache-from type=registry,ref="$cache_ref_main" \
+      --cache-to type=registry,ref="$cache_ref_main",mode=max \
+      --no-cache-filter system-build
+      --no-cache-filter system-final )
+  elif [[ "$branch" =~ ^dependabot/ ]]; then
+    buildx_cmd+=( --cache-from type=registry,ref="$cache_ref_main" )
+  else
+    buildx_cmd+=( \
+      --cache-from type=registry,ref="$cache_ref_main" \
+      --cache-from type=registry,ref="$cache_ref_branch" \
+      --cache-to type=registry,ref="$cache_ref_branch",mode=max \
+      --no-cache-filter system-build
+      --no-cache-filter system-final )
+  fi
+
+  buildx_cmd+=( --push --progress=plain )
+
+  "${buildx_cmd[@]}"
+  prune_stale_cache_artifacts
+}
+
+prune_stale_cache_artifacts() {
+  # Stale cache artifacts become untagged images in the ECR repository when new ones are pushed.
+  echo "Pruning untagged ECR cache artifacts for repository $name"
+
+  local digests
+  digests=$(AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr list-images --repository-name "$name" --region="$aws_region" --filter tagStatus=UNTAGGED --query 'imageIds[].imageDigest' --output text)
+
+  if [ -z "$digests" ]; then
+    echo "No untagged cache artifacts to prune"
+    return 0
+  fi
+
+  local args=()
+  for digest in $digests; do
+    args+=( imageDigest=$digest )
+  done
+
+  local count=$(echo $digests | wc -w | tr -d ' ')
+
+  echo "Deleting $count untagged cache artifacts"
+  AWS_ACCESS_KEY_ID=$aws_access_key_id AWS_SECRET_ACCESS_KEY=$aws_secret_access_key aws ecr batch-delete-image --repository-name "$name" --region="$aws_region" --image-ids "${args[@]}"
 }
 
 sub_deploy() {
